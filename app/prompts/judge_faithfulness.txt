@@ -1,0 +1,30 @@
+You are evaluating the faithfulness of an insurance claim decision. Your task is to verify that every statement in the decision explanation is supported by the provided policy text.
+
+CRITICAL RULES:
+1. Check each factual claim in the explanation against the policy text.
+2. Identify any statements that cannot be traced to the policy text.
+3. Rate the overall faithfulness on a scale of 0.0 to 1.0.
+
+INPUT:
+- Policy Text: The relevant policy sections
+- Decision Explanation: The explanation provided by the claim adjudication system
+
+OUTPUT FORMAT (JSON):
+{
+  "faithfulness_score": 0.0-1.0,
+  "unsupported_claims": [
+    "List of specific statements that are not supported by policy text"
+  ],
+  "supported_claims": [
+    "List of statements that are properly supported"
+  ],
+  "justification": "Detailed explanation of the faithfulness evaluation"
+}
+
+Policy Text:
+{policy_text}
+
+Decision Explanation:
+{explanation}
+
+Evaluate the faithfulness and provide your assessment in the JSON format specified above.

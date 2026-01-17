@@ -1,0 +1,107 @@
+[
+  {
+    "claim_text": "I need to file a claim for a broken arm that occurred during a skiing accident. The accident happened on January 15th, and I was treated at the emergency room. The medical bills total $5,000.",
+    "policy_reference": "health_policy",
+    "expected_decision": "APPROVE",
+    "expected_sections": ["Section 1", "Section 2.1", "Section 3"],
+    "claim_category": "clearly_covered"
+  },
+  {
+    "claim_text": "I am requesting reimbursement for a routine dental cleaning that I had last month. The cleaning cost $150 and was performed by my regular dentist.",
+    "policy_reference": "health_policy",
+    "expected_decision": "APPROVE",
+    "expected_sections": ["Section 2.2", "Section 4"],
+    "claim_category": "clearly_covered"
+  },
+  {
+    "claim_text": "I want to claim expenses for cosmetic surgery I had to improve my appearance. The procedure was elective and not medically necessary.",
+    "policy_reference": "health_policy",
+    "expected_decision": "REJECT",
+    "expected_sections": ["Section 5", "Section 6.2"],
+    "claim_category": "clearly_excluded"
+  },
+  {
+    "claim_text": "I'm filing a claim for medical expenses related to a pre-existing condition that was diagnosed before my policy started. The condition requires ongoing treatment.",
+    "policy_reference": "health_policy",
+    "expected_decision": "REJECT",
+    "expected_sections": ["Section 7", "Section 8.1"],
+    "claim_category": "clearly_excluded"
+  },
+  {
+    "claim_text": "I had a medical emergency while traveling abroad. I was hospitalized for 3 days due to food poisoning. The hospital bills are $8,000 and I need reimbursement.",
+    "policy_reference": "travel_policy",
+    "expected_decision": "APPROVE",
+    "expected_sections": ["Section 1", "Section 3.1", "Section 4"],
+    "claim_category": "clearly_covered"
+  },
+  {
+    "claim_text": "My flight was delayed for 6 hours due to weather conditions. I missed my connecting flight and had to stay overnight in a hotel. I'm claiming reimbursement for the hotel expenses of $200.",
+    "policy_reference": "travel_policy",
+    "expected_decision": "APPROVE",
+    "expected_sections": ["Section 2", "Section 5.2"],
+    "claim_category": "clearly_covered"
+  },
+  {
+    "claim_text": "I want to claim expenses for a trip I canceled because I changed my mind about the destination. I canceled 2 weeks before departure.",
+    "policy_reference": "travel_policy",
+    "expected_decision": "REJECT",
+    "expected_sections": ["Section 6", "Section 7.1"],
+    "claim_category": "clearly_excluded"
+  },
+  {
+    "claim_text": "I'm filing a claim for lost luggage. The airline lost my suitcase during a flight transfer. The suitcase contained personal items worth approximately $1,500.",
+    "policy_reference": "travel_policy",
+    "expected_decision": "APPROVE",
+    "expected_sections": ["Section 4", "Section 8"],
+    "claim_category": "clearly_covered"
+  },
+  {
+    "claim_text": "I had a medical procedure that my doctor recommended, but I'm not sure if it's covered. The procedure is somewhat experimental and there's limited information about its effectiveness.",
+    "policy_reference": "health_policy",
+    "expected_decision": "ESCALATE",
+    "expected_sections": ["Section 3", "Section 9"],
+    "claim_category": "ambiguous"
+  },
+  {
+    "claim_text": "I'm claiming expenses for a medical treatment that occurred in a foreign country. The treatment was for an emergency condition, but I'm not certain if my policy covers international medical expenses.",
+    "policy_reference": "health_policy",
+    "expected_decision": "ESCALATE",
+    "expected_sections": ["Section 2", "Section 10"],
+    "claim_category": "ambiguous"
+  },
+  {
+    "claim_text": "I need to file a claim for a trip cancellation due to a family emergency. My father had a heart attack and I had to cancel my vacation to be with him. The cancellation fees are $500.",
+    "policy_reference": "travel_policy",
+    "expected_decision": "ESCALATE",
+    "expected_sections": ["Section 6", "Section 7"],
+    "claim_category": "ambiguous"
+  },
+  {
+    "claim_text": "I'm requesting coverage for a medical device that my doctor prescribed. The device costs $2,000 and is used for managing a chronic condition. I'm not sure if durable medical equipment is covered under my plan.",
+    "policy_reference": "health_policy",
+    "expected_decision": "ESCALATE",
+    "expected_sections": ["Section 3", "Section 11"],
+    "claim_category": "ambiguous"
+  },
+  {
+    "claim_text": "I had an accident while participating in an extreme sport (bungee jumping). I broke my leg and incurred medical expenses of $3,500. I want to know if this is covered.",
+    "policy_reference": "health_policy",
+    "expected_decision": "REJECT",
+    "expected_sections": ["Section 6", "Section 12"],
+    "claim_category": "clearly_excluded"
+  },
+  {
+    "claim_text": "I'm filing a claim for prescription medication that I've been taking for the past 6 months. The medication is on my insurance formulary and was prescribed by my doctor.",
+    "policy_reference": "health_policy",
+    "expected_decision": "APPROVE",
+    "expected_sections": ["Section 2.3", "Section 4"],
+    "claim_category": "clearly_covered"
+  },
+  {
+    "claim_text": "I want to claim reimbursement for a medical consultation that I had via telemedicine. The consultation was for a routine check-up and cost $100.",
+    "policy_reference": "health_policy",
+    "expected_decision": "APPROVE",
+    "expected_sections": ["Section 2", "Section 4.1"],
+    "claim_category": "clearly_covered"
+  }
+]

@@ -1,0 +1,281 @@
+"""RAG pipeline for insurance claim processing.
+
+This module orchestrates the complete workflow:
+1. Policy ingestion (PDF → chunks → embeddings → vector store)
+2. Claim processing (claim → retrieval → reasoning → decision)
+"""
+
+from typing import List, Dict, Any, Optional
+import json
+import os
+from pathlib import Path
+import numpy as np
+
+from app.llm_client import get_llm_client, LLMClient
+from app.embeddings import get_embedding_service, EmbeddingService
+from app.pdf_loader import load_policy_pdf, PDFChunk
+from app.retriever import create_retriever, VectorRetriever
+
+
+class RAGPipeline:
+    """Main RAG pipeline for claim processing."""
+
+    def __init__(
+        self,
+        llm_client: Optional[LLMClient] = None,
+        embedding_service: Optional[EmbeddingService] = None,
+        retriever: Optional[VectorRetriever] = None,
+        top_k: int = 5,
+    ):
+        """
+        Initialize RAG pipeline.
+
+        Args:
+            llm_client: LLM client instance (auto-created if None)
+            embedding_service: Embedding service instance (auto-created if None)
+            retriever: Vector retriever instance (auto-created if None)
+            top_k: Number of chunks to retrieve per query
+        """
+        self.llm_client = llm_client or get_llm_client()
+        self.embedding_service = embedding_service or get_embedding_service()
+        self.top_k = top_k
+
+        # Initialize retriever if not provided
+        if retriever is None:
+            embedding_dim = self.embedding_service.get_embedding_dimension()
+            self.retriever = create_retriever(embedding_dim)
+        else:
+            self.retriever = retriever
+
+        # Store policy metadata
+        self.policy_metadata: Dict[str, Any] = {}
+
+    def ingest_policy(self, pdf_path: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> Dict[str, Any]:
+        """
+        Ingest a policy PDF into the vector store.
+
+        Args:
+            pdf_path: Path to policy PDF file
+            chunk_size: Target chunk size in characters
+            chunk_overlap: Overlap between chunks in characters
+
+        Returns:
+            Dict with ingestion statistics
+        """
+        # Load and chunk PDF
+        chunks = load_policy_pdf(pdf_path, chunk_size, chunk_overlap)
+
+        if not chunks:
+            raise ValueError(f"No text extracted from PDF: {pdf_path}")
+
+        policy_name = Path(pdf_path).stem
+
+        # Generate embeddings for all chunks (documents use RETRIEVAL_DOCUMENT)
+        chunk_texts = [chunk.text for chunk in chunks]
+        embeddings = self.embedding_service.embed_batch(chunk_texts, task_type="RETRIEVAL_DOCUMENT")
+
+        # Convert to numpy array
+        embeddings_array = np.array(embeddings, dtype=np.float32)
+
+        # Prepare metadata
+        metadata_list = [chunk.to_dict() for chunk in chunks]
+
+        # Add to vector store
+        self.retriever.add_documents(embeddings_array, metadata_list)
+
+        # Store policy metadata
+        self.policy_metadata[policy_name] = {
+            "pdf_path": pdf_path,
+            "num_chunks": len(chunks),
+            "chunk_size": chunk_size,
+            "chunk_overlap": chunk_overlap,
+        }
+
+        return {
+            "policy_name": policy_name,
+            "num_chunks": len(chunks),
+            "status": "ingested",
+        }
+
+    def process_claim(
+        self,
+        claim_text: str,
+        policy_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Process an insurance claim and generate a decision.
+
+        Args:
+            claim_text: The claim description (text or path to PDF)
+            policy_name: Optional policy name filter (if multiple policies ingested)
+
+        Returns:
+            Dict with decision, explanation, citations, and metadata
+        """
+        # Load claim text if it's a file path
+        if os.path.exists(claim_text):
+            # Try to load as text file first
+            try:
+                with open(claim_text, "r", encoding="utf-8") as f:
+                    claim_text = f.read()
+            except:
+                # If not text, try PDF
+                from app.pdf_loader import extract_text_from_pdf
+                pages = extract_text_from_pdf(claim_text)
+                claim_text = "\n\n".join([p["text"] for p in pages])
+
+        # Retrieve relevant policy chunks (queries use RETRIEVAL_QUERY)
+        query_embedding = np.array(
+            self.embedding_service.embed_text(claim_text, task_type="RETRIEVAL_QUERY"),
+            dtype=np.float32,
+        )
+        retrieved_results = self.retriever.search(query_embedding, k=self.top_k)
+
+        if not retrieved_results:
+            # No relevant chunks found - escalate
+            return {
+                "decision": "ESCALATE",
+                "explanation": "No relevant policy sections found for this claim. Manual review required.",
+                "cited_sections": [],
+                "retrieved_chunks": [],
+                "raw_model_output": "",
+                "confidence_score": 0.0,
+            }
+
+        # Format policy context for LLM
+        policy_context_parts = []
+        for i, result in enumerate(retrieved_results, 1):
+            chunk = result["chunk"]
+            metadata = result["metadata"]
+            policy_context_parts.append(
+                f"[Section {metadata.get('section_id', 'Unknown')}, "
+                f"Page {metadata.get('page_number', '?')}]\n{chunk}"
+            )
+        policy_context = "\n\n---\n\n".join(policy_context_parts)
+
+        # Load decision prompt template
+        prompt_path = Path(__file__).parent / "prompts" / "claim_decision.txt"
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            prompt_template = f.read()
+
+        # Format prompt
+        formatted_prompt = prompt_template.format(
+            policy_context=policy_context,
+            claim_text=claim_text,
+        )
+
+        # Generate decision using LLM
+        messages = [
+            {"role": "user", "content": formatted_prompt}
+        ]
+
+        try:
+            response = self.llm_client.chat_completion(
+                messages=messages,
+                temperature=0.1,  # Low temperature for consistent decisions
+                max_tokens=2000,
+            )
+            raw_output = response["content"]
+        except Exception as e:
+            return {
+                "decision": "ESCALATE",
+                "explanation": f"Error generating decision: {str(e)}. Manual review required.",
+                "cited_sections": [],
+                "retrieved_chunks": [r["metadata"] for r in retrieved_results],
+                "raw_model_output": "",
+                "confidence_score": 0.0,
+            }
+
+        # Parse LLM response (expecting JSON)
+        try:
+            # Try to extract JSON from response
+            # LLM might wrap JSON in markdown code blocks
+            json_text = raw_output
+            if "```json" in json_text:
+                json_text = json_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in json_text:
+                json_text = json_text.split("```")[1].split("```")[0].strip()
+
+            decision_data = json.loads(json_text)
+        except (json.JSONDecodeError, KeyError) as e:
+            # Fallback: try to extract decision from text
+            decision = "ESCALATE"
+            explanation = raw_output
+            cited_sections = []
+
+            # Try to infer decision from text
+            if "APPROVE" in raw_output.upper():
+                decision = "APPROVE"
+            elif "REJECT" in raw_output.upper():
+                decision = "REJECT"
+
+            decision_data = {
+                "decision": decision,
+                "explanation": explanation,
+                "cited_sections": cited_sections,
+                "confidence": "LOW",
+            }
+
+        # Extract cited sections from retrieved chunks
+        cited_sections = []
+        if "cited_sections" in decision_data:
+            # Use the cited sections from LLM response
+            cited_sections = decision_data["cited_sections"]
+        else:
+            # Fallback: cite all retrieved chunks
+            for result in retrieved_results:
+                metadata = result["metadata"]
+                cited_sections.append({
+                    "section_id": metadata.get("section_id", "Unknown"),
+                    "page_number": metadata.get("page_number", 0),
+                    "relevant_text": result["chunk"][:500],  # First 500 chars
+                })
+
+        # Calculate confidence score
+        # Base confidence on retrieval quality and LLM confidence
+        avg_retrieval_score = np.mean([r["score"] for r in retrieved_results])
+        confidence_map = {"HIGH": 0.9, "MEDIUM": 0.7, "LOW": 0.5}
+        llm_confidence = confidence_map.get(
+            decision_data.get("confidence", "LOW"), 0.5
+        )
+        confidence_score = (avg_retrieval_score * 0.5) + (llm_confidence * 0.5)
+
+        # Auto-escalate if confidence is too low
+        decision = decision_data.get("decision", "ESCALATE").upper()
+        if confidence_score < 0.75:
+            decision = "ESCALATE"
+            decision_data["explanation"] = (
+                f"Low confidence score ({confidence_score:.2f}). "
+                f"Original decision: {decision_data.get('decision', 'UNKNOWN')}. "
+                f"Manual review required."
+            )
+
+        # Build final response
+        return {
+            "decision": decision,
+            "explanation": decision_data.get("explanation", ""),
+            "cited_sections": cited_sections,
+            "retrieved_chunks": [
+                {
+                    "text": r["chunk"][:500],  # Truncate for response
+                    "metadata": r["metadata"],
+                    "similarity_score": float(r["score"]),
+                }
+                for r in retrieved_results
+            ],
+            "raw_model_output": raw_output,
+            "confidence_score": float(confidence_score),
+        }
+
+    def clear_policies(self) -> None:
+        """Clear all ingested policies from the vector store."""
+        self.retriever.clear()
+        self.policy_metadata.clear()
+
+    def get_policy_info(self) -> Dict[str, Any]:
+        """Get information about ingested policies."""
+        return {
+            "num_policies": len(self.policy_metadata),
+            "num_documents": self.retriever.get_document_count(),
+            "policies": self.policy_metadata,
+        }
