@@ -259,9 +259,12 @@ class RAGPipeline:
 
         # RUNTIME EVALUATION: Calculate confidence score for production safety
         # This is part of runtime evaluation that directly affects the decision
-        # Combines retrieval quality (similarity scores) with LLM confidence indicator
+        # Combines retrieval quality (similarity scores) with model confidence signals
+        # Note: Uses model confidence indicators, NOT decision correctness (which is only measured offline)
         avg_retrieval_score = np.mean([r["score"] for r in retrieved_results])
         confidence_map = {"HIGH": 0.9, "MEDIUM": 0.7, "LOW": 0.5}
+        # llm_confidence_indicator: Model-reported uncertainty or refusal markers
+        # In production, this can be replaced with calibrated confidence estimation
         llm_confidence = confidence_map.get(
             decision_data.get("confidence", "LOW"), 0.5
         )

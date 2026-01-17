@@ -34,16 +34,20 @@ def calculate_composite_confidence(
     weights: Dict[str, float] = None,
 ) -> float:
     """
-    Calculate composite confidence score.
+    Calculate composite confidence score for OFFLINE evaluation.
+
+    NOTE: This is different from runtime confidence calculation.
+    - Runtime: Uses retrieval similarity + faithfulness + model confidence signals
+    - Offline: Uses retrieval recall + faithfulness + decision correctness (ground truth)
 
     Args:
-        retrieval_recall: Retrieval recall score (0-1)
+        retrieval_recall: Retrieval recall score (0-1) - offline metric
         faithfulness_score: Faithfulness score (0-1)
-        decision_correct: Whether decision was correct (boolean, converted to 0-1)
+        decision_correct: Whether decision was correct (boolean, converted to 0-1) - offline metric only
         weights: Optional custom weights (default: 40% retrieval, 40% faithfulness, 20% decision)
 
     Returns:
-        Composite confidence score (0-1)
+        Composite confidence score (0-1) for offline evaluation purposes
     """
     if weights is None:
         weights = {

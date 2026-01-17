@@ -27,7 +27,8 @@ The system separates policy ingestion, runtime inference, and evaluation concern
 │  PDF Loader     │────▶│  Chunking     │────▶│ Embeddings  │
 │                 │     │  + Metadata  │     │ (RETRIEVAL_ │
 │                 │     │  (section_id, │     │  DOCUMENT)  │
-│                 │     │   page_num)   │     └──────┬──────┘
+│                 │     │   page_num,   │     └──────┬──────┘
+│                 │     │   policy_name)│             │
 └─────────────────┘     └──────────────┘             │
                                                      ▼
                                             ┌──────────────┐
@@ -43,16 +44,27 @@ The system separates policy ingestion, runtime inference, and evaluation concern
 ┌─────────────────┐     ┌──────────────────────┐     ┌──────────────────┐
 │  RAG Pipeline  │────▶│  Retrieval           │────▶│  LLM             │
 │                 │     │  (Top-K + similarity │     │  (Policy-grounded│
-│                 │     │   score + metadata)  │     │   reasoning only)│
-└────────┬────────┘     └──────────────────────┘     └──────┬───────────┘
-         │                                                  │
-         ▼                                                  ▼
-┌─────────────────┐                                  ┌─────────────┐
-│  Decision       │                                  │  Citations  │
-│  (APPROVE/      │                                  │  (from chunk│
-│   REJECT/       │                                  │   metadata) │
-│   ESCALATE)     │                                  └─────────────┘
-└────────┬────────┘
+│                 │     │   score + metadata) │     │   reasoning only)│
+│                 │     │                      │     │  Must rely ONLY │
+│                 │     │  Metadata flow:      │     │  on retrieved   │
+│                 │     │  • section_id        │     │  policy chunks  │
+│                 │     │  • page_number       │     │  No external    │
+│                 │     │  • policy_name       │     │  knowledge      │
+│                 │     │  • similarity_score  │     │  If insufficient│
+└────────┬────────┘     └──────────────────────┘     │  → ESCALATE    │
+         │                  │                          └──────┬───────────┘
+         │                  │                                   │
+         │                  │                                   │
+         │                  └───────────┐                       │
+         │                              │                       │
+         ▼                              ▼                       ▼
+┌─────────────────┐              ┌─────────────┐      ┌─────────────┐
+│  Decision       │              │  Citations   │      │  Metadata   │
+│  (APPROVE/      │              │  (extracted   │      │  (section_id,│
+│   REJECT/       │              │   from chunk │      │   page_num)  │
+│   ESCALATE)     │              │   metadata)  │      └─────────────┘
+└────────┬────────┘              └─────────────┘
+         │
          │
          ▼
 ┌─────────────────────────────────────────────────────────┐
@@ -60,16 +72,26 @@ The system separates policy ingestion, runtime inference, and evaluation concern
 │  • Faithfulness check (LLM-as-judge)                    │
 │  • Retrieval confidence (similarity scores)              │
 │  • Composite confidence scoring                          │
-│  → If confidence < 0.75 → force ESCALATE                 │
+│  → ESCALATE if confidence < 0.75                        │
 └─────────────────────────────────────────────────────────┘
+         │
+         │ (runs during inference, affects decision)
+         │
+         ▼
+    [Production Decision Output]
 
 ┌─────────────────────────────────────────────────────────┐
 │  Offline Evaluation (Model Quality)                    │
-│  • Retrieval Recall (on synthetic dataset)               │
-│  • Decision Correctness (predicted vs expected)         │
-│  • Aggregate metrics & reports                          │
-│  → Used for model comparison, prompt tuning, testing   │
+│  • Retrieval Recall (on synthetic dataset)             │
+│  • Decision Accuracy (predicted vs expected)            │
+│  • Aggregate metrics & reports                           │
+│  → Used for model comparison, prompt tuning, testing    │
 └─────────────────────────────────────────────────────────┘
+         │
+         │ (runs outside production on evaluation datasets)
+         │
+         ▼
+    [Evaluation Reports]
 ```
 
 ## System Design
@@ -125,13 +147,13 @@ The system separates policy ingestion, runtime inference, and evaluation concern
 - Citations are extracted from chunk metadata (section_id, page_number)
 
 **Reasoning Strategy (Policy-Only Grounding)**:
-- **Strict Constraint**: LLM reasoning must rely ONLY on retrieved policy chunks
-- **No External Knowledge**: System prompts explicitly forbid the use of external knowledge or general insurance domain knowledge
+- **Strict Constraint**: LLM reasoning must rely ONLY on retrieved policy chunks. System prompts explicitly forbid external knowledge. If insufficient information, the model must respond with ESCALATE (never guess or use general knowledge).
+- **No External Knowledge**: System prompts explicitly forbid the use of external knowledge, general insurance domain knowledge, or training data knowledge
 - **Insufficient Information Handling**: If retrieved policy text is insufficient to make a decision, the model must refuse or escalate (never guess)
 - **Enforcement Mechanisms**:
-  - Prompt design explicitly states policy-only constraint
-  - Faithfulness evaluation (LLM-as-judge) verifies all statements are policy-grounded
-  - Confidence-based escalation prevents unsafe approvals
+  - **Prompt Design**: Explicitly states "You MUST base your decision ONLY on the policy text provided. Do NOT use any external knowledge."
+  - **Runtime Faithfulness Check**: LLM-as-judge verifies all statements are policy-grounded during inference
+  - **Confidence-Based Escalation**: Low confidence automatically triggers ESCALATE, preventing unsafe approvals
 - JSON-structured output for consistent parsing
 - Auto-escalation when confidence < 0.75
 
@@ -204,9 +226,14 @@ confidence = (0.4 × avg_retrieval_similarity) +
              (0.2 × llm_confidence_indicator)
 ```
 
+**Components**:
+- `avg_retrieval_similarity`: Average cosine similarity scores from top-K retrieved chunks (0-1)
+- `faithfulness_score`: LLM-as-judge evaluation of policy grounding (0-1)
+- `llm_confidence_indicator`: Model-reported uncertainty or refusal markers, normalized to [0,1]. Derived from LLM response confidence signals (e.g., "HIGH", "MEDIUM", "LOW" mapped to 0.9, 0.7, 0.5). In production, this can be replaced with calibrated confidence estimation from model logits or uncertainty quantification methods.
+
 **Escalation Threshold**: If confidence < 0.75, decision **automatically changes to ESCALATE**
 
-**Production Impact**: This runtime check ensures no low-confidence decisions are approved or rejected without human review
+**Production Impact**: This runtime check ensures no low-confidence decisions are approved or rejected without human review. Note: This uses model confidence signals, not decision correctness (which is only measured in offline evaluation).
 
 ### Offline Evaluation (Model Quality)
 
@@ -264,7 +291,7 @@ Offline evaluation generates comprehensive reports including:
 This constraint ensures regulatory compliance and prevents the system from making decisions based on assumptions or general knowledge.
 
 ### 2. Confidence-Based Escalation
-- **Multi-Factor Scoring**: Combines retrieval quality, faithfulness, and decision correctness
+- **Multi-Factor Scoring**: Combines retrieval quality, faithfulness, and model confidence signals (not decision correctness, which is only measured offline)
 - **Automatic Escalation**: Low confidence (< 0.75) triggers ESCALATE decision
 - **Transparency**: Confidence scores included in all responses
 
@@ -277,6 +304,18 @@ This constraint ensures regulatory compliance and prevents the system from makin
 - **Graceful Degradation**: Missing API keys, network errors handled gracefully
 - **Fallback Providers**: OpenRouter fallback if Gemini unavailable
 - **Validation**: Input validation and type checking throughout
+
+## Non-Goals
+
+This system is designed with clear boundaries to ensure appropriate use and governance:
+
+- **Does not replace human adjudication**: The system provides decision recommendations with confidence scores. Final decisions require human review, especially for escalated cases.
+
+- **Does not learn from production decisions**: The system does not update its model or prompts based on production outcomes. All improvements are made through offline evaluation and controlled updates.
+
+- **Does not perform probabilistic risk scoring**: The system focuses on policy compliance and coverage determination, not actuarial risk assessment or premium calculation.
+
+These boundaries ensure the system remains a decision-support tool rather than an autonomous decision-maker, aligning with regulated-AI best practices for insurance applications.
 
 ## Installation
 
