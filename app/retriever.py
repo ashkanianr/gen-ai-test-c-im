@@ -2,6 +2,15 @@
 
 This module provides a clean interface for vector store operations,
 currently implemented with FAISS, but abstracted for future swaps.
+
+RETRIEVAL QUALITY:
+- Returns top-K chunks with cosine similarity scores (0-1)
+- Each result includes:
+  * chunk: Full text content
+  * score: Similarity score (used for confidence calculation)
+  * metadata: section_id, page_number, policy_name, chunk_index
+- Metadata is used for citations and traceability
+- Similarity scores feed into runtime evaluation confidence calculation
 """
 
 from abc import ABC, abstractmethod

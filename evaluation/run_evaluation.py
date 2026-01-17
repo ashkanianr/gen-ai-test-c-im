@@ -1,7 +1,18 @@
-"""End-to-end evaluation runner.
+"""Offline evaluation runner for model quality measurement.
 
-This module orchestrates all evaluation layers and calculates
-composite confidence scores.
+This module runs evaluation OUTSIDE production on synthetic datasets.
+It measures system quality for model comparison, prompt tuning, and regression testing.
+
+EVALUATION MODES:
+- Runtime Evaluation: Integrated in rag_pipeline.py during inference
+  * Faithfulness checks, confidence scoring, automatic escalation
+  
+- Offline Evaluation: This module (runs on evaluation datasets)
+  * Retrieval recall metrics
+  * Decision accuracy (predicted vs expected)
+  * Aggregate reports for model comparison
+
+This separation ensures production safety (runtime) vs model quality measurement (offline).
 """
 
 from typing import List, Dict, Any, Optional

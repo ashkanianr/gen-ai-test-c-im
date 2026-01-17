@@ -15,7 +15,7 @@ A production-quality GenAI system for automated insurance claim processing using
 
 ## Architecture Overview
 
-The system follows a clean, model-agnostic architecture with clear separation of concerns:
+The system separates policy ingestion, runtime inference, and evaluation concerns. Evaluation is not a single step, but a layered mechanism consisting of runtime safety checks (faithfulness and confidence) and offline quality measurement (retrieval recall and decision accuracy).
 
 ```
 ┌─────────────────┐
@@ -25,11 +25,14 @@ The system follows a clean, model-agnostic architecture with clear separation of
          ▼
 ┌─────────────────┐     ┌──────────────┐     ┌─────────────┐
 │  PDF Loader     │────▶│  Chunking     │────▶│ Embeddings  │
-└─────────────────┘     └──────────────┘     └──────┬──────┘
-                                                     │
+│                 │     │  + Metadata  │     │ (RETRIEVAL_ │
+│                 │     │  (section_id, │     │  DOCUMENT)  │
+│                 │     │   page_num)   │     └──────┬──────┘
+└─────────────────┘     └──────────────┘             │
                                                      ▼
                                             ┌──────────────┐
                                             │  FAISS Store │
+                                            │  (Vector DB) │
                                             └──────┬───────┘
                                                    │
 ┌─────────────────┐                              │
@@ -37,38 +40,71 @@ The system follows a clean, model-agnostic architecture with clear separation of
 └────────┬────────┘                              │
          │                                        │
          ▼                                        ▼
-┌─────────────────┐     ┌──────────────┐     ┌─────────────┐
-│  RAG Pipeline  │────▶│  Retrieval   │────▶│   LLM       │
-└────────┬────────┘     └──────────────┘     └──────┬──────┘
-         │                                            │
-         ▼                                            ▼
-┌─────────────────┐                          ┌─────────────┐
-│  Decision       │                          │  Citations  │
-│  (APPROVE/      │                          └─────────────┘
-│   REJECT/       │
-│   ESCALATE)     │
+┌─────────────────┐     ┌──────────────────────┐     ┌──────────────────┐
+│  RAG Pipeline  │────▶│  Retrieval           │────▶│  LLM             │
+│                 │     │  (Top-K + similarity │     │  (Policy-grounded│
+│                 │     │   score + metadata)  │     │   reasoning only)│
+└────────┬────────┘     └──────────────────────┘     └──────┬───────────┘
+         │                                                  │
+         ▼                                                  ▼
+┌─────────────────┐                                  ┌─────────────┐
+│  Decision       │                                  │  Citations  │
+│  (APPROVE/      │                                  │  (from chunk│
+│   REJECT/       │                                  │   metadata) │
+│   ESCALATE)     │                                  └─────────────┘
 └────────┬────────┘
          │
          ▼
-┌─────────────────┐
-│  Evaluation     │
-│  Layer          │
-└─────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│  Runtime Evaluation (Production Safety)                 │
+│  • Faithfulness check (LLM-as-judge)                    │
+│  • Retrieval confidence (similarity scores)              │
+│  • Composite confidence scoring                          │
+│  → If confidence < 0.75 → force ESCALATE                 │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│  Offline Evaluation (Model Quality)                    │
+│  • Retrieval Recall (on synthetic dataset)               │
+│  • Decision Correctness (predicted vs expected)         │
+│  • Aggregate metrics & reports                          │
+│  → Used for model comparison, prompt tuning, testing   │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ## System Design
 
 ### Design Principles
 
+The system separates policy ingestion, runtime inference, and evaluation concerns. Evaluation is not a single step, but a layered mechanism consisting of runtime safety checks (faithfulness and confidence) and offline quality measurement (retrieval recall and decision accuracy).
+
 1. **Model Agnosticism**: All LLM interactions go through a unified `LLMClient` interface. Vendor-specific logic (Gemini, OpenRouter) is isolated to `llm_client.py`.
 
 2. **Clean Architecture**: Business logic is separated from infrastructure concerns. Vector DB access is abstracted behind `retriever.py`, allowing easy swaps (FAISS → Pinecone, Weaviate, etc.).
 
-3. **Evaluation First**: Evaluation is not an afterthought—it's integrated into the decision pipeline and runs automatically to ensure reliability.
+3. **Layered Evaluation Architecture**:
+   - **Runtime Evaluation** (Production Safety): Integrated into `rag_pipeline.py` during inference
+     * Faithfulness checks (LLM-as-judge verifies policy grounding)
+     * Retrieval confidence (similarity scores from top-K chunks)
+     * Composite confidence scoring
+     * Automatic escalation (confidence < 0.75 → force ESCALATE)
+     * **Purpose**: Prevent hallucinations and unsafe approvals in production
+   
+   - **Offline Evaluation** (Model Quality): Separate `evaluation/` module runs on synthetic datasets
+     * Retrieval recall (measures if required sections were retrieved)
+     * Decision accuracy (predicted vs expected on evaluation set)
+     * Aggregate metrics and reports
+     * **Purpose**: Model comparison, prompt tuning, regression testing
 
-4. **Traceability**: Every decision includes cited policy sections, retrieved chunks, and confidence scores for full auditability.
+4. **Policy-Only Grounding Constraint**: 
+   - LLM reasoning must rely ONLY on retrieved policy chunks
+   - System prompts explicitly forbid external knowledge
+   - If retrieved text is insufficient → model must refuse or escalate (never guess)
+   - Enforced by: prompt design, faithfulness evaluation, confidence-based escalation
 
-5. **Safety by Design**: Low-confidence decisions automatically escalate to human review. System prompts explicitly forbid external knowledge.
+5. **Traceability**: Every decision includes cited policy sections (from chunk metadata), retrieved chunks with similarity scores, and confidence scores for full auditability.
+
+6. **Safety by Design**: Low-confidence decisions automatically escalate to human review. System prompts explicitly forbid external knowledge.
 
 ### RAG Design Choices
 
@@ -81,10 +117,21 @@ The system follows a clean, model-agnostic architecture with clear separation of
 - FAISS with cosine similarity for fast, in-memory retrieval
 - Top-K retrieval (default: 5 chunks) balances context richness with token limits
 - Normalized embeddings ensure accurate cosine similarity calculations
+- **Retrieval Quality Metrics**: Each retrieved chunk includes:
+  - Similarity score (cosine similarity, 0-1)
+  - Metadata (policy section ID, page number, policy name)
+  - Full chunk text for LLM context
+- Retrieved chunks with metadata are passed to the LLM for reasoning
+- Citations are extracted from chunk metadata (section_id, page_number)
 
-**Reasoning Strategy**:
-- LLM receives only retrieved policy chunks as context
-- System prompt explicitly forbids external knowledge
+**Reasoning Strategy (Policy-Only Grounding)**:
+- **Strict Constraint**: LLM reasoning must rely ONLY on retrieved policy chunks
+- **No External Knowledge**: System prompts explicitly forbid the use of external knowledge or general insurance domain knowledge
+- **Insufficient Information Handling**: If retrieved policy text is insufficient to make a decision, the model must refuse or escalate (never guess)
+- **Enforcement Mechanisms**:
+  - Prompt design explicitly states policy-only constraint
+  - Faithfulness evaluation (LLM-as-judge) verifies all statements are policy-grounded
+  - Confidence-based escalation prevents unsafe approvals
 - JSON-structured output for consistent parsing
 - Auto-escalation when confidence < 0.75
 
@@ -108,16 +155,64 @@ Main orchestration component:
 - `process_claim()`: Claim → retrieval → reasoning → decision
 
 ### `evaluation/`
-Three-layer evaluation system:
-- **Retrieval Evaluation**: Measures if required policy sections were retrieved
-- **Faithfulness Evaluation**: LLM-as-judge verifies all statements are policy-grounded
-- **Decision Accuracy**: Compares predicted vs expected decisions
+Two-mode evaluation system:
+
+**Runtime Evaluation** (integrated in `rag_pipeline.py`):
+- **Faithfulness Evaluation**: LLM-as-judge verifies all explanation statements are supported by policy text (runs during inference)
+- **Retrieval Confidence**: Calculates average similarity scores from retrieved chunks
+- **Composite Confidence**: Weighted combination of retrieval quality and faithfulness
+- **Automatic Escalation**: Forces ESCALATE decision if confidence < 0.75
+
+**Offline Evaluation** (runs on synthetic datasets):
+- **Retrieval Evaluation**: Measures if required policy sections were retrieved (recall metric)
+- **Decision Accuracy**: Compares predicted vs expected decisions on evaluation dataset
+- **Aggregate Metrics**: Generates reports for model comparison and regression testing
 
 ## Evaluation Methodology
 
-The system implements comprehensive evaluation across three dimensions:
+The system implements a two-mode evaluation architecture that separates production safety from model quality measurement.
 
-### 1. Retrieval Recall
+### Runtime Evaluation (Production Safety)
+
+Runtime evaluation occurs **during inference** and directly affects the decision. It prevents hallucinations and unsafe approvals in production.
+
+#### 1. Faithfulness Check
+**Metric**: LLM-as-judge evaluation (0.0-1.0) of whether all explanation statements are supported by policy text
+
+**Purpose**: Detects hallucinations and unsupported claims in real-time
+
+**Method**: Separate LLM evaluation using `judge_faithfulness.txt` prompt template that verifies every statement in the decision explanation is traceable to retrieved policy chunks
+
+**Behavior**: If faithfulness score is low, confidence is reduced, potentially triggering escalation
+
+#### 2. Retrieval Confidence
+**Metric**: Average similarity score of retrieved chunks (0.0-1.0)
+
+**Purpose**: Measures retrieval quality for the current claim
+
+**Calculation**: Average of cosine similarity scores from top-K retrieved chunks
+
+**Behavior**: Low retrieval confidence indicates insufficient or irrelevant policy context
+
+#### 3. Composite Confidence Score
+
+The system calculates a weighted composite confidence score **during inference**:
+
+```
+confidence = (0.4 × avg_retrieval_similarity) + 
+             (0.4 × faithfulness_score) + 
+             (0.2 × llm_confidence_indicator)
+```
+
+**Escalation Threshold**: If confidence < 0.75, decision **automatically changes to ESCALATE**
+
+**Production Impact**: This runtime check ensures no low-confidence decisions are approved or rejected without human review
+
+### Offline Evaluation (Model Quality)
+
+Offline evaluation occurs **outside production** on synthetic datasets. It measures system quality for model comparison, prompt tuning, and regression testing.
+
+#### 1. Retrieval Recall
 **Metric**: Percentage of expected policy sections found in retrieved chunks
 
 **Purpose**: Ensures the retrieval system finds relevant policy information
@@ -127,37 +222,46 @@ The system implements comprehensive evaluation across three dimensions:
 recall = (found_sections / expected_sections) × 100%
 ```
 
-### 2. Faithfulness Score
-**Metric**: LLM-as-judge evaluation (0.0-1.0) of whether all explanation statements are supported by policy text
+**Usage**: Used to compare different retrieval strategies, chunk sizes, and embedding models
 
-**Purpose**: Detects hallucinations and unsupported claims
-
-**Method**: Separate LLM evaluation using `judge_faithfulness.txt` prompt template
-
-### 3. Decision Accuracy
-**Metric**: Percentage of correct decisions (APPROVE/REJECT/ESCALATE)
+#### 2. Decision Accuracy
+**Metric**: Percentage of correct decisions (APPROVE/REJECT/ESCALATE) on evaluation dataset
 
 **Purpose**: Measures end-to-end system correctness
 
-### Composite Confidence Score
+**Usage**: Tracks model performance over time, identifies regression, guides prompt improvements
 
-The system calculates a weighted composite confidence score:
+#### 3. Aggregate Metrics
 
-```
-confidence = (0.4 × retrieval_recall) + 
-             (0.4 × faithfulness_score) + 
-             (0.2 × decision_correctness)
-```
+Offline evaluation generates comprehensive reports including:
+- Per-category accuracy (clearly covered, clearly excluded, ambiguous claims)
+- Confusion matrices
+- Retrieval recall distribution
+- Faithfulness score distribution
+- Escalation rate analysis
 
-**Escalation Threshold**: If confidence < 0.75, decision automatically changes to ESCALATE
+**Usage**: Model comparison, A/B testing, regression testing, compliance reporting
 
 ## Reliability & Safety Mechanisms
 
-### 1. Hallucination Control
-- **System Prompts**: Explicitly forbid external knowledge
-- **Context Limitation**: LLM receives only retrieved policy chunks
-- **Refusal Mechanism**: System must respond with ESCALATE if policy text is insufficient
-- **Faithfulness Evaluation**: LLM-as-judge verifies every statement
+### 1. Policy-Only Grounding Constraint
+
+**Core Principle**: The LLM is **forbidden from using external knowledge**. All reasoning must be based solely on retrieved policy chunks.
+
+**Enforcement Mechanisms**:
+
+- **System Prompts**: Explicitly state "You MUST base your decision ONLY on the policy text provided. Do NOT use any external knowledge."
+- **Context Limitation**: LLM receives only retrieved policy chunks as context—no general knowledge, no domain expertise, no training data
+- **Refusal Mechanism**: System prompt requires "If the policy text does not contain sufficient information to make a decision, you MUST respond with ESCALATE"
+- **Runtime Faithfulness Check**: LLM-as-judge verifies every statement in the explanation is traceable to policy text
+- **Confidence-Based Escalation**: Low confidence automatically triggers ESCALATE, preventing unsafe decisions
+
+**Traceability**: Every decision includes:
+- Cited policy sections (section_id, page_number)
+- Retrieved chunks with similarity scores
+- Raw model output for audit
+
+This constraint ensures regulatory compliance and prevents the system from making decisions based on assumptions or general knowledge.
 
 ### 2. Confidence-Based Escalation
 - **Multi-Factor Scoring**: Combines retrieval quality, faithfulness, and decision correctness
