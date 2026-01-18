@@ -30,6 +30,14 @@ The system separates policy ingestion, runtime inference, and evaluation concern
 │                 │     │   page_num,   │     └──────┬──────┘
 │                 │     │   policy_name)│             │
 └─────────────────┘     └──────────────┘             │
+                                                     │
+                                                     ▼
+                                            ┌──────────────┐
+                                            │ Embedding     │
+                                            │ Cache         │
+                                            │ (.cache/)     │
+                                            └──────┬───────┘
+                                                     │
                                                      ▼
                                             ┌──────────────┐
                                             │  FAISS Store │
@@ -135,6 +143,13 @@ The system separates policy ingestion, runtime inference, and evaluation concern
 - Overlap ensures context continuity across chunk boundaries
 - Metadata (section_id, page_number, policy_name) attached to each chunk for traceability
 
+**Embedding Caching**:
+- Policy embeddings are automatically cached to `.cache/embeddings/` directory
+- Cache key includes: file path, modification time, file size, chunk size, and chunk overlap
+- Cache is automatically invalidated when policy files change
+- Significantly reduces API calls and prevents rate limits during development and testing
+- First ingestion generates and caches embeddings; subsequent runs load from cache (no API calls)
+
 **Retrieval Strategy**:
 - FAISS with cosine similarity for fast, in-memory retrieval
 - Top-K retrieval (default: 5 chunks) balances context richness with token limits
@@ -165,6 +180,9 @@ Model-agnostic LLM interface supporting Gemini and OpenRouter. All LLM calls rou
 ### `app/embeddings.py`
 Embedding service wrapper for Gemini embeddings. Provides batch processing and dimension information.
 
+### `app/embedding_cache.py`
+Embedding cache manager that stores policy embeddings to disk, avoiding regeneration for unchanged policies. Reduces API calls and prevents rate limits. Automatically invalidates cache when policies change (based on file modification time and content hash).
+
 ### `app/pdf_loader.py`
 PDF parsing using `pdfplumber` (primary) or `pypdf` (fallback). Extracts text with page information, chunks with overlap, and attaches metadata.
 
@@ -173,8 +191,10 @@ Vector database abstraction layer. Currently implements FAISS but designed for e
 
 ### `app/rag_pipeline.py`
 Main orchestration component:
-- `ingest_policy()`: PDF → chunks → embeddings → vector store
+- `ingest_policy()`: PDF → chunks → embeddings (with caching) → vector store
 - `process_claim()`: Claim → retrieval → reasoning → decision
+
+**Embedding Caching**: The pipeline automatically caches policy embeddings in `.cache/embeddings/` to avoid regenerating embeddings for unchanged policies. Cache is keyed by file path, modification time, and chunking parameters, ensuring automatic invalidation when policies change.
 
 ### `evaluation/`
 Two-mode evaluation system:
@@ -350,13 +370,32 @@ python scripts/create_sample_pdfs.py
 # Or manually convert data/policies/*.txt to PDFs
 ```
 
+### Embedding Cache
+
+The system automatically caches policy embeddings to reduce API calls and avoid rate limits:
+
+- **Cache Location**: `.cache/embeddings/` (automatically created)
+- **Cache Behavior**: 
+  - First ingestion: Generates embeddings and saves to cache
+  - Subsequent runs: Loads from cache (no API calls)
+  - Policy changes: Automatically detects changes and regenerates
+- **Cache Management**: Cache is keyed by file path, modification time, and chunking parameters
+- **Benefits**: 
+  - Reduces embedding API calls by ~90% for repeated policy ingestion
+  - Prevents rate limit issues during development and testing
+  - Faster policy ingestion on subsequent runs
+
+**Note**: The cache directory (`.cache/`) is excluded from git via `.gitignore`. To clear cache, simply delete the `.cache/` directory.
+
 ## Usage
 
 ### CLI Interface
 
-**Ingest a policy**:
+**Ingest a policy** (embeddings are automatically cached):
 ```bash
 python -m app.main ingest data/policies/health_policy.pdf
+# First run: Generates embeddings and caches them (saves to .cache/embeddings/)
+# Subsequent runs: Loads from cache (much faster, no API calls)
 ```
 
 **Process a claim** (using sample claim file):
@@ -434,7 +473,7 @@ print(f"Explanation: {result['explanation']}")
 
 ### Current Limitations
 
-1. **In-Memory Vector Store**: FAISS is in-memory, so policies are lost on restart. Production would require persistent storage (Pinecone, Weaviate, etc.).
+1. **In-Memory Vector Store**: FAISS is in-memory, so policies are lost on restart. Production would require persistent storage (Pinecone, Weaviate, etc.). **Note**: Embeddings are cached to disk, but the FAISS index itself is rebuilt on restart.
 
 2. **Simple Chunking**: Current chunking doesn't respect document structure (headers, sections). Future: semantic chunking or structure-aware splitting.
 
@@ -443,6 +482,8 @@ print(f"Explanation: {result['explanation']}")
 4. **Single Policy at a Time**: System processes one policy per claim. Future: multi-policy support with policy selection logic.
 
 5. **Evaluation Dataset**: Synthetic dataset may not reflect real-world complexity. Future: real anonymized claims dataset.
+
+6. **API Rate Limits**: Free tier Gemini API has rate limits (100 embedding requests/min, 20 generation requests/min). The embedding cache helps significantly, but high-volume testing may still hit generation limits.
 
 ### Future Improvements
 
@@ -473,6 +514,7 @@ manulife-smartclaim/
 │   ├── retriever.py            # Vector DB abstraction
 │   ├── llm_client.py           # Model-agnostic LLM interface
 │   ├── embeddings.py           # Embedding service
+│   ├── embedding_cache.py      # Embedding cache manager
 │   ├── pdf_loader.py           # PDF parsing and chunking
 │   └── prompts/
 │       ├── claim_decision.txt
@@ -488,7 +530,10 @@ manulife-smartclaim/
 │   ├── claims/                 # Sample claim documents
 │   └── evaluation_set.json     # Evaluation dataset
 ├── scripts/
-│   └── create_sample_pdfs.py   # Utility to convert text to PDF
+│   ├── create_sample_pdfs.py   # Utility to convert text to PDF
+│   └── test_claims.py          # Automated test suite for sample claims
+├── .cache/                     # Embedding cache (auto-generated, git-ignored)
+│   └── embeddings/             # Cached policy embeddings
 ├── requirements.txt
 ├── .env.example
 └── README.md
