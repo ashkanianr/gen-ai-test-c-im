@@ -359,14 +359,19 @@ python scripts/create_sample_pdfs.py
 python -m app.main ingest data/policies/health_policy.pdf
 ```
 
-**Process a claim**:
+**Process a claim** (using sample claim file):
 ```bash
-python -m app.main claim "I need to file a claim for a broken arm from a skiing accident" --policy-path data/policies/health_policy.pdf
+python -m app.main claim data/claims/health_claim_001_approve.txt --policy-path data/policies/health_policy.txt
 ```
 
 **Process a claim with JSON output**:
 ```bash
-python -m app.main claim "Claim text here" --policy-path data/policies/health_policy.pdf --json
+python -m app.main claim data/claims/health_claim_001_approve.txt --policy-path data/policies/health_policy.txt --json
+```
+
+**Run test suite** (test multiple scenarios):
+```bash
+python scripts/test_claims.py
 ```
 
 **Run evaluation**:
