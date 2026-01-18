@@ -26,6 +26,7 @@ POLICY-ONLY GROUNDING:
 from typing import List, Dict, Any, Optional
 import json
 import os
+import re
 from pathlib import Path
 import numpy as np
 
@@ -190,13 +191,18 @@ class RAGPipeline:
         # Format policy context for LLM
         # CRITICAL: LLM receives ONLY retrieved policy chunks - no external knowledge allowed
         # Policy-only grounding constraint enforced by prompt design and faithfulness evaluation
+        # Sort by similarity score (highest first) to put most relevant sections first
+        sorted_results = sorted(retrieved_results, key=lambda x: x["score"], reverse=True)
+        
         policy_context_parts = []
-        for i, result in enumerate(retrieved_results, 1):
+        for i, result in enumerate(sorted_results, 1):
             chunk = result["chunk"]
             metadata = result["metadata"]
+            score = result["score"]
             policy_context_parts.append(
                 f"[Section {metadata.get('section_id', 'Unknown')}, "
-                f"Page {metadata.get('page_number', '?')}]\n{chunk}"
+                f"Page {metadata.get('page_number', '?')}, "
+                f"Relevance: {score:.3f}]\n{chunk}"
             )
         policy_context = "\n\n---\n\n".join(policy_context_parts)
 
@@ -212,7 +218,9 @@ class RAGPipeline:
         )
 
         # Generate decision using LLM
+        # Add system message for better instruction following
         messages = [
+            {"role": "system", "content": "You are an expert insurance claim adjudication system. Follow instructions precisely. Output valid JSON only."},
             {"role": "user", "content": formatted_prompt}
         ]
 
@@ -240,8 +248,8 @@ class RAGPipeline:
             try:
                 response = self.llm_client.chat_completion(
                     messages=messages,
-                    temperature=0.0,  # Zero temperature for most consistent decisions
-                    max_tokens=2000,
+                    temperature=0.1,  # Very low temperature for consistent, deterministic decisions
+                    max_tokens=2500,  # Increased for more detailed explanations
                 )
                 raw_output = response["content"]
             except Exception as e:
@@ -254,8 +262,8 @@ class RAGPipeline:
                     try:
                         response = fallback_client.chat_completion(
                             messages=messages,
-                            temperature=0.0,
-                            max_tokens=2000,
+                            temperature=0.1,
+                            max_tokens=2500,
                         )
                         raw_output = response["content"]
                         self.llm_client = fallback_client
@@ -283,24 +291,48 @@ class RAGPipeline:
         try:
             # Try to extract JSON from response
             # LLM might wrap JSON in markdown code blocks
-            json_text = raw_output
+            json_text = raw_output.strip()
+            
+            # Remove markdown code blocks
             if "```json" in json_text:
                 json_text = json_text.split("```json")[1].split("```")[0].strip()
             elif "```" in json_text:
                 json_text = json_text.split("```")[1].split("```")[0].strip()
-
+            
+            # Try to find JSON object boundaries
+            if "{" in json_text and "}" in json_text:
+                start = json_text.find("{")
+                end = json_text.rfind("}") + 1
+                json_text = json_text[start:end]
+            
+            # Parse JSON
             decision_data = json.loads(json_text)
-        except (json.JSONDecodeError, KeyError) as e:
-            # Fallback: try to extract decision from text
+            
+            # Validate required fields
+            if "decision" not in decision_data:
+                raise ValueError("Missing 'decision' field in response")
+                
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            # Fallback: try to extract decision from text using more sophisticated parsing
             decision = "ESCALATE"
             explanation = raw_output
             cited_sections = []
 
-            # Try to infer decision from text
-            if "APPROVE" in raw_output.upper():
-                decision = "APPROVE"
-            elif "REJECT" in raw_output.upper():
-                decision = "REJECT"
+            # Try to infer decision from text (case-insensitive, whole word matching)
+            output_upper = raw_output.upper()
+            if '"decision"' in output_upper or "'decision'" in output_upper:
+                # Try to extract from JSON-like structure
+                import re
+                decision_match = re.search(r'["\']decision["\']\s*:\s*["\'](APPROVE|REJECT|ESCALATE)["\']', output_upper)
+                if decision_match:
+                    decision = decision_match.group(1)
+            
+            # Fallback to keyword search
+            if decision == "ESCALATE":
+                if "APPROVE" in output_upper and output_upper.count("APPROVE") > output_upper.count("REJECT"):
+                    decision = "APPROVE"
+                elif "REJECT" in output_upper:
+                    decision = "REJECT"
 
             decision_data = {
                 "decision": decision,
