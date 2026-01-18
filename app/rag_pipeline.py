@@ -221,10 +221,10 @@ class RAGPipeline:
             raw_output = None
             fallback_client = None
             
-            # Check if OpenRouter is available as fallback (using same Gemini 3 Flash model for consistency)
+            # Check if OpenRouter is available as fallback (using same Gemini 3 Flash Preview model for consistency)
             from app.llm_client import OpenRouterClient
             try:
-                fallback_client = OpenRouterClient(model_name="google/gemini-3-flash")
+                fallback_client = OpenRouterClient(model_name="google/gemini-3-flash-preview")
                 if not fallback_client.is_available():
                     fallback_client = None
             except:
@@ -244,7 +244,7 @@ class RAGPipeline:
                 
                 # If rate limit and we have OpenRouter fallback, switch immediately
                 if is_rate_limit and fallback_client:
-                    print(f"[WARNING] Rate limit hit on primary LLM. Switching to OpenRouter (Gemini 3 Flash)...")
+                    print(f"[WARNING] Rate limit hit on primary LLM. Switching to OpenRouter (Gemini 3 Flash Preview)...")
                     try:
                         response = fallback_client.chat_completion(
                             messages=messages,
@@ -253,7 +253,7 @@ class RAGPipeline:
                         )
                         raw_output = response["content"]
                         self.llm_client = fallback_client
-                        print("[INFO] Successfully switched to OpenRouter (Gemini 3 Flash) for consistency")
+                        print("[INFO] Successfully switched to OpenRouter (Gemini 3 Flash Preview) for consistency")
                     except Exception as fallback_error:
                         print(f"[WARNING] OpenRouter fallback also failed: {fallback_error}")
                         raise RuntimeError(f"Both primary LLM and OpenRouter fallback failed. Primary error: {str(e)}, Fallback error: {str(fallback_error)}")
