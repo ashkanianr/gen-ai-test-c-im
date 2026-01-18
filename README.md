@@ -108,7 +108,7 @@ The system separates policy ingestion, runtime inference, and evaluation concern
 
 The system separates policy ingestion, runtime inference, and evaluation concerns. Evaluation is not a single step, but a layered mechanism consisting of runtime safety checks (faithfulness and confidence) and offline quality measurement (retrieval recall and decision accuracy).
 
-1. **Model Agnosticism**: All LLM interactions go through a unified `LLMClient` interface. Vendor-specific logic (Gemini, OpenRouter) is isolated to `llm_client.py`.
+1. **Model Agnosticism**: All LLM interactions go through a unified `LLMClient` interface. Vendor-specific logic (Gemini, OpenRouter) is isolated to `llm_client.py`. The system automatically falls back to OpenRouter (using the same Gemini 3 Flash model) when rate limits are hit, ensuring consistent results while avoiding API throttling.
 
 2. **Clean Architecture**: Business logic is separated from infrastructure concerns. Vector DB access is abstracted behind `retriever.py`, allowing easy swaps (FAISS → Pinecone, Weaviate, etc.).
 
@@ -360,6 +360,7 @@ pip install -r requirements.txt
 ```bash
 cp .env.example .env
 # Edit .env and add your GEMINI_API_KEY
+# Optionally add OPENROUTER_API_KEY for automatic fallback on rate limits
 ```
 
 4. **Convert sample policies to PDFs** (optional):
@@ -483,7 +484,7 @@ print(f"Explanation: {result['explanation']}")
 
 5. **Evaluation Dataset**: Synthetic dataset may not reflect real-world complexity. Future: real anonymized claims dataset.
 
-6. **API Rate Limits**: Free tier Gemini API has rate limits (100 embedding requests/min, 20 generation requests/min). The embedding cache helps significantly, but high-volume testing may still hit generation limits.
+6. **API Rate Limits**: Free tier Gemini API has rate limits (100 embedding requests/min, 20 generation requests/min). The embedding cache helps significantly, but high-volume testing may still hit generation limits. **Automatic Fallback**: The system automatically switches to OpenRouter (using the same Gemini 3 Flash model) when rate limits are hit, ensuring consistent results while avoiding API throttling.
 
 ### Future Improvements
 

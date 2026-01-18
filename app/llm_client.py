@@ -182,7 +182,7 @@ class OpenRouterClient(LLMClient):
             raise ValueError("OPENROUTER_API_KEY not found in environment variables")
 
         self.model_name = model_name or os.getenv(
-            "OPENROUTER_MODEL", "openrouter/gpt-5-mini"
+            "OPENROUTER_MODEL", "google/gemini-3-flash"
         )
         self.client = self.OpenAI(
             base_url="https://openrouter.ai/api/v1",
@@ -223,7 +223,7 @@ def get_llm_client(fallback: bool = True, model_name: Optional[str] = None) -> L
 
     Args:
         fallback: If True, fallback to OpenRouter if Gemini is unavailable
-        model_name: Optional model name (defaults: 'gemini-3-flash-preview' for Gemini, 'openrouter/gpt-5-mini' for OpenRouter)
+        model_name: Optional model name (defaults: 'gemini-3-flash-preview' for Gemini, 'google/gemini-3-flash' for OpenRouter)
 
     Returns:
         An initialized LLMClient instance
@@ -243,7 +243,7 @@ def get_llm_client(fallback: bool = True, model_name: Optional[str] = None) -> L
     # Fallback to OpenRouter
     if fallback:
         try:
-            client = OpenRouterClient(model_name=model_name or "openrouter/gpt-5-mini")
+            client = OpenRouterClient(model_name=model_name or "google/gemini-3-flash")
             if client.is_available():
                 return client
         except (ValueError, ImportError) as e:

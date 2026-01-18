@@ -217,33 +217,52 @@ class RAGPipeline:
         ]
 
         try:
-            # Retry logic for rate limits
-            max_retries = 3
-            retry_delay = 30  # seconds
+            # Retry logic with automatic fallback to OpenRouter on rate limits
             raw_output = None
+            fallback_client = None
             
-            for attempt in range(max_retries):
-                try:
-                    response = self.llm_client.chat_completion(
-                        messages=messages,
-                        temperature=0.0,  # Zero temperature for most consistent decisions
-                        max_tokens=2000,
-                    )
-                    raw_output = response["content"]
-                    break
-                except Exception as e:
-                    error_str = str(e)
-                    if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "quota" in error_str.lower():
-                        if attempt < max_retries - 1:
-                            print(f"[WARNING] Rate limit hit. Waiting {retry_delay} seconds before retry {attempt + 2}/{max_retries}...")
-                            import time
-                            time.sleep(retry_delay)
-                            retry_delay *= 1.5  # Exponential backoff
-                            continue
-                    raise  # Re-raise if not a rate limit error or out of retries
+            # Check if OpenRouter is available as fallback (using same Gemini 3 Flash model for consistency)
+            from app.llm_client import OpenRouterClient
+            try:
+                fallback_client = OpenRouterClient(model_name="google/gemini-3-flash")
+                if not fallback_client.is_available():
+                    fallback_client = None
+            except:
+                fallback_client = None
+            
+            # Try primary client first
+            try:
+                response = self.llm_client.chat_completion(
+                    messages=messages,
+                    temperature=0.0,  # Zero temperature for most consistent decisions
+                    max_tokens=2000,
+                )
+                raw_output = response["content"]
+            except Exception as e:
+                error_str = str(e)
+                is_rate_limit = "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "quota" in error_str.lower()
+                
+                # If rate limit and we have OpenRouter fallback, switch immediately
+                if is_rate_limit and fallback_client:
+                    print(f"[WARNING] Rate limit hit on primary LLM. Switching to OpenRouter (Gemini 3 Flash)...")
+                    try:
+                        response = fallback_client.chat_completion(
+                            messages=messages,
+                            temperature=0.0,
+                            max_tokens=2000,
+                        )
+                        raw_output = response["content"]
+                        self.llm_client = fallback_client
+                        print("[INFO] Successfully switched to OpenRouter (Gemini 3 Flash) for consistency")
+                    except Exception as fallback_error:
+                        print(f"[WARNING] OpenRouter fallback also failed: {fallback_error}")
+                        raise RuntimeError(f"Both primary LLM and OpenRouter fallback failed. Primary error: {str(e)}, Fallback error: {str(fallback_error)}")
+                else:
+                    # Not a rate limit or no fallback available - re-raise
+                    raise
             
             if raw_output is None:
-                raise RuntimeError("Failed to get LLM response after retries")
+                raise RuntimeError("Failed to get LLM response")
         except Exception as e:
             return {
                 "decision": "ESCALATE",
