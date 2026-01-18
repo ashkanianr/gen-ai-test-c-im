@@ -47,5 +47,8 @@ Thumbs.db
 evaluation_report.json
 /tmp/
 
+# Embedding cache
+.cache/
+
 # Logs
 *.log

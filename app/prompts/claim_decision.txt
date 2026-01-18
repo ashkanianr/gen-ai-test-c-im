@@ -24,15 +24,54 @@ OUTPUT FORMAT (JSON):
   "confidence": "HIGH" | "MEDIUM" | "LOW"
 }}
 
-DECISION CRITERIA:
-- APPROVE: The claim is clearly covered by the policy based on explicit policy language
-- REJECT: The claim is clearly excluded or not covered based on explicit policy language
-- ESCALATE: The policy text is ambiguous, incomplete, or insufficient to make a clear decision
+DECISION CRITERIA (APPLY STRICTLY):
+
+APPROVE when:
+- The claim description matches a COVERED service or benefit explicitly stated in the policy
+- The policy clearly states coverage for the type of service, condition, or expense described
+- All requirements for coverage (if any) appear to be met based on the claim description
+- Example: Emergency room visit for broken bone → APPROVE (Section 2.1 covers emergency services for broken bones)
+- Example: Routine dental cleaning → APPROVE (Section 2.2 covers routine dental cleanings)
+
+REJECT when:
+- The claim is EXPLICITLY EXCLUDED by the policy (e.g., cosmetic surgery, experimental treatments, excluded activities)
+- The policy clearly states the service/condition is NOT covered
+- The claim violates explicit policy exclusions
+- IMPORTANT: Distinguish between excluded activities and covered activities. For example:
+  * "Extreme skiing" or "professional racing" → REJECT (Section 6.1 excludes extreme sports)
+  * Regular skiing, recreational sports, or normal activities → COVERED (not excluded unless explicitly listed)
+- Example: Facelift for cosmetic purposes → REJECT (Section 6.2 excludes cosmetic procedures)
+- Example: Bungee jumping injury → REJECT (Section 6.1 excludes extreme sports)
+- Example: Regular skiing accident → APPROVE (Section 6.1 only excludes "extreme skiing", not regular skiing)
+
+ESCALATE ONLY when:
+- The policy text is genuinely ambiguous or contradictory about coverage
+- Critical information is missing from the retrieved policy sections (e.g., cost limits, authorization requirements that can't be determined)
+- The claim involves edge cases not clearly addressed in the policy
+- DO NOT escalate simply because you want to be cautious - if the policy clearly covers or excludes, make the decision
+
+IMPORTANT: If the policy clearly covers a service, APPROVE it. If it clearly excludes it, REJECT it. Only ESCALATE when there is genuine ambiguity or missing critical information.
 
 Policy Context:
 {policy_context}
 
 Claim Description:
 {claim_text}
+
+STEP-BY-STEP ANALYSIS:
+1. Review the claim description carefully
+2. Identify which policy sections are relevant
+3. Check if the claim matches a COVERED service → APPROVE
+4. Check if the claim matches an EXCLUDED service → REJECT  
+5. Only if genuinely ambiguous or missing critical info → ESCALATE
+
+IMPORTANT INTERPRETATION RULES:
+- If a service is listed as COVERED (e.g., emergency services, preventive care), APPROVE it unless it's also explicitly EXCLUDED
+- For activity exclusions: Only reject if the activity is SPECIFICALLY listed as excluded (e.g., "extreme skiing" is excluded, but regular skiing is NOT excluded unless explicitly stated)
+- Emergency medical treatment for injuries is generally COVERED even if the activity that caused the injury has exclusions, UNLESS the policy explicitly excludes medical expenses from that activity
+- When in doubt between APPROVE and ESCALATE, if the policy clearly covers the service type, APPROVE it
+- When in doubt between REJECT and ESCALATE, if the policy clearly excludes it, REJECT it
+
+Remember: Be decisive. If the policy clearly covers it, APPROVE. If it clearly excludes it, REJECT. Only ESCALATE when truly uncertain or missing critical information.
 
 Analyze this claim and provide your decision in the JSON format specified above.

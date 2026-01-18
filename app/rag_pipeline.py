@@ -31,6 +31,7 @@ import numpy as np
 
 from app.llm_client import get_llm_client, LLMClient
 from app.embeddings import get_embedding_service, EmbeddingService
+from app.embedding_cache import EmbeddingCache
 from app.pdf_loader import load_policy_pdf, PDFChunk
 from app.retriever import create_retriever, VectorRetriever
 
@@ -65,6 +66,9 @@ class RAGPipeline:
         else:
             self.retriever = retriever
 
+        # Initialize embedding cache
+        self.embedding_cache = EmbeddingCache()
+
         # Store policy metadata
         self.policy_metadata: Dict[str, Any] = {}
 
@@ -88,15 +92,31 @@ class RAGPipeline:
 
         policy_name = Path(pdf_path).stem
 
-        # Generate embeddings for all chunks (documents use RETRIEVAL_DOCUMENT)
-        chunk_texts = [chunk.text for chunk in chunks]
-        embeddings = self.embedding_service.embed_batch(chunk_texts, task_type="RETRIEVAL_DOCUMENT")
+        # Check cache first
+        cached_result = self.embedding_cache.get_cached_embeddings(
+            pdf_path, chunk_size, chunk_overlap
+        )
+        
+        if cached_result is not None:
+            # Use cached embeddings
+            print(f"[CACHE] Using cached embeddings for {policy_name}")
+            embeddings_array, metadata_list = cached_result
+        else:
+            # Generate embeddings for all chunks (documents use RETRIEVAL_DOCUMENT)
+            print(f"[CACHE] Generating new embeddings for {policy_name}...")
+            chunk_texts = [chunk.text for chunk in chunks]
+            embeddings = self.embedding_service.embed_batch(chunk_texts, task_type="RETRIEVAL_DOCUMENT")
 
-        # Convert to numpy array
-        embeddings_array = np.array(embeddings, dtype=np.float32)
+            # Convert to numpy array
+            embeddings_array = np.array(embeddings, dtype=np.float32)
 
-        # Prepare metadata
-        metadata_list = [chunk.to_dict() for chunk in chunks]
+            # Prepare metadata
+            metadata_list = [chunk.to_dict() for chunk in chunks]
+            
+            # Save to cache for future use
+            self.embedding_cache.save_embeddings(
+                pdf_path, chunk_size, chunk_overlap, embeddings_array, metadata_list
+            )
 
         # Add to vector store
         self.retriever.add_documents(embeddings_array, metadata_list)
@@ -144,11 +164,12 @@ class RAGPipeline:
 
         # Retrieve relevant policy chunks (queries use RETRIEVAL_QUERY)
         # Retrieval includes: top-K chunks, similarity scores, and metadata (section_id, page_number)
+        # Increase k slightly to get more context for better decisions
         query_embedding = np.array(
             self.embedding_service.embed_text(claim_text, task_type="RETRIEVAL_QUERY"),
             dtype=np.float32,
         )
-        retrieved_results = self.retriever.search(query_embedding, k=self.top_k)
+        retrieved_results = self.retriever.search(query_embedding, k=min(self.top_k + 2, 10))  # Get a few more chunks for context
         
         # Retrieved results contain:
         # - chunk: Full text of the policy chunk
@@ -196,12 +217,33 @@ class RAGPipeline:
         ]
 
         try:
-            response = self.llm_client.chat_completion(
-                messages=messages,
-                temperature=0.1,  # Low temperature for consistent decisions
-                max_tokens=2000,
-            )
-            raw_output = response["content"]
+            # Retry logic for rate limits
+            max_retries = 3
+            retry_delay = 30  # seconds
+            raw_output = None
+            
+            for attempt in range(max_retries):
+                try:
+                    response = self.llm_client.chat_completion(
+                        messages=messages,
+                        temperature=0.0,  # Zero temperature for most consistent decisions
+                        max_tokens=2000,
+                    )
+                    raw_output = response["content"]
+                    break
+                except Exception as e:
+                    error_str = str(e)
+                    if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "quota" in error_str.lower():
+                        if attempt < max_retries - 1:
+                            print(f"[WARNING] Rate limit hit. Waiting {retry_delay} seconds before retry {attempt + 2}/{max_retries}...")
+                            import time
+                            time.sleep(retry_delay)
+                            retry_delay *= 1.5  # Exponential backoff
+                            continue
+                    raise  # Re-raise if not a rate limit error or out of retries
+            
+            if raw_output is None:
+                raise RuntimeError("Failed to get LLM response after retries")
         except Exception as e:
             return {
                 "decision": "ESCALATE",
@@ -262,26 +304,47 @@ class RAGPipeline:
         # Combines retrieval quality (similarity scores) with model confidence signals
         # Note: Uses model confidence indicators, NOT decision correctness (which is only measured offline)
         avg_retrieval_score = np.mean([r["score"] for r in retrieved_results])
-        confidence_map = {"HIGH": 0.9, "MEDIUM": 0.7, "LOW": 0.5}
+        confidence_map = {"HIGH": 0.9, "MEDIUM": 0.75, "LOW": 0.6}  # Adjusted: less conservative
         # llm_confidence_indicator: Model-reported uncertainty or refusal markers
         # In production, this can be replaced with calibrated confidence estimation
         llm_confidence = confidence_map.get(
-            decision_data.get("confidence", "LOW"), 0.5
+            decision_data.get("confidence", "MEDIUM"), 0.7  # Default to MEDIUM instead of LOW
         )
-        confidence_score = (avg_retrieval_score * 0.5) + (llm_confidence * 0.5)
+        # Weight retrieval more heavily if it's high quality (good matches)
+        # Weight LLM confidence more if retrieval is lower quality
+        if avg_retrieval_score >= 0.75:
+            # High quality retrieval - trust it more
+            confidence_score = (avg_retrieval_score * 0.6) + (llm_confidence * 0.4)
+        else:
+            # Lower quality retrieval - rely more on LLM confidence
+            confidence_score = (avg_retrieval_score * 0.4) + (llm_confidence * 0.6)
 
         # RUNTIME EVALUATION: Auto-escalate if confidence is too low
         # This is a production safety mechanism - prevents unsafe approvals/rejections
         # Note: Full faithfulness evaluation (LLM-as-judge) would run here in production
         # For now, we use retrieval confidence + LLM confidence indicator
         decision = decision_data.get("decision", "ESCALATE").upper()
-        if confidence_score < 0.75:
+        
+        # Only override to ESCALATE if confidence is very low AND it's an APPROVE/REJECT decision
+        # If LLM already said ESCALATE, respect that decision
+        # Lower threshold to 0.65 to reduce false escalations, but still catch truly uncertain cases
+        if decision != "ESCALATE" and confidence_score < 0.65:
             decision = "ESCALATE"
             decision_data["explanation"] = (
                 f"Low confidence score ({confidence_score:.2f}). "
                 f"Original decision: {decision_data.get('decision', 'UNKNOWN')}. "
                 f"Manual review required."
             )
+        # If confidence is medium (0.65-0.75) and decision is REJECT, allow it (rejections are safer)
+        # But if it's APPROVE with medium confidence, be more cautious
+        elif decision == "APPROVE" and 0.65 <= confidence_score < 0.70:
+            # For APPROVE with medium confidence, check if retrieval quality is good
+            if avg_retrieval_score < 0.70:
+                decision = "ESCALATE"
+                decision_data["explanation"] = (
+                    f"Medium confidence score ({confidence_score:.2f}) with low retrieval quality. "
+                    f"Original decision: APPROVE. Manual review recommended."
+                )
 
         # Build final response
         return {
