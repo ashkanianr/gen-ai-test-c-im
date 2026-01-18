@@ -32,12 +32,12 @@ def test_claim(claim_path: str, policy_path: str, expected_decision: str = None)
         pipeline = RAGPipeline()
         
         # Ingest policy
-        print(f"\n📄 Ingesting policy: {Path(policy_path).name}")
+        print(f"\n[FILE] Ingesting policy: {Path(policy_path).name}")
         policy_result = pipeline.ingest_policy(policy_path)
-        print(f"   ✓ Ingested {policy_result['num_chunks']} chunks")
+        print(f"   [OK] Ingested {policy_result['num_chunks']} chunks")
         
         # Process claim
-        print(f"\n📋 Processing claim: {Path(claim_path).name}")
+        print(f"\n[CLAIM] Processing claim: {Path(claim_path).name}")
         result = pipeline.process_claim(claim_path)
         
         # Display results
@@ -48,7 +48,7 @@ def test_claim(claim_path: str, policy_path: str, expected_decision: str = None)
         print(f"Confidence: {result['confidence_score']:.2%}")
         
         if expected_decision:
-            match = "✓ CORRECT" if result['decision'] == expected_decision else "✗ MISMATCH"
+            match = "[OK] CORRECT" if result['decision'] == expected_decision else "[X] MISMATCH"
             print(f"Expected: {expected_decision} - {match}")
         
         print(f"\nExplanation:")
@@ -70,7 +70,7 @@ def test_claim(claim_path: str, policy_path: str, expected_decision: str = None)
         return result
         
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\n[ERROR] Error: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -152,7 +152,7 @@ def main():
     
     print("\nDetailed Results:")
     for r in results:
-        status = "✓" if r["correct"] else "✗"
+        status = "[OK]" if r["correct"] else "[X]"
         print(f"  {status} {r['test']}: Expected {r['expected']}, Got {r['actual']}")
 
 

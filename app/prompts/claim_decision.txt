@@ -11,18 +11,18 @@ INPUT:
 - Claim Description: The insurance claim being submitted
 
 OUTPUT FORMAT (JSON):
-{
+{{
   "decision": "APPROVE" | "REJECT" | "ESCALATE",
   "explanation": "Detailed explanation of the decision, with all statements traceable to policy text",
   "cited_sections": [
-    {
+    {{
       "section_id": "Section identifier from policy",
       "page_number": 1,
       "relevant_text": "Exact quote from policy that supports decision"
-    }
+    }}
   ],
   "confidence": "HIGH" | "MEDIUM" | "LOW"
-}
+}}
 
 DECISION CRITERIA:
 - APPROVE: The claim is clearly covered by the policy based on explicit policy language
