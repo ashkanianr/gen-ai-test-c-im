@@ -133,6 +133,10 @@ def main():
             test_case["policy"],
             test_case["expected"]
         )
+        # Small delay between tests to avoid rate limits
+        if i < len(test_cases):
+            import time
+            time.sleep(2)  # 2 second delay between tests
         results.append({
             "test": Path(test_case["claim"]).name,
             "expected": test_case["expected"],

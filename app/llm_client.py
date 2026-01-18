@@ -184,10 +184,29 @@ class OpenRouterClient(LLMClient):
         self.model_name = model_name or os.getenv(
             "OPENROUTER_MODEL", "google/gemini-3-flash-preview"
         )
-        self.client = self.OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=api_key,
-        )
+        # Initialize OpenAI client for OpenRouter
+        # Use httpx client directly to avoid proxy/environment variable conflicts
+        try:
+            import httpx
+            # Create a custom httpx client without proxy settings
+            http_client = httpx.Client(
+                timeout=60.0,
+                follow_redirects=True,
+            )
+            self.client = self.OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=api_key,
+                http_client=http_client,
+            )
+        except Exception as e:
+            # Fallback: try without custom http_client
+            try:
+                self.client = self.OpenAI(
+                    base_url="https://openrouter.ai/api/v1",
+                    api_key=api_key,
+                )
+            except Exception as e2:
+                raise RuntimeError(f"Failed to initialize OpenRouter client: {str(e)} (fallback also failed: {str(e2)})")
 
     def chat_completion(
         self,

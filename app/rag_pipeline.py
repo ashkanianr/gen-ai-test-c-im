@@ -235,13 +235,24 @@ class RAGPipeline:
             fallback_client = None
             try:
                 # Check if OpenRouter API key exists
-                import os
-                if os.getenv("OPENROUTER_API_KEY"):
-                    fallback_client = OpenRouterClient(model_name="google/gemini-3-flash-preview")
-                    if not fallback_client.is_available():
+                openrouter_key = os.getenv("OPENROUTER_API_KEY")
+                if openrouter_key:
+                    try:
+                        fallback_client = OpenRouterClient(model_name="google/gemini-3-flash-preview")
+                        # Test if it's actually available by checking is_available
+                        if fallback_client.is_available():
+                            print("[INFO] OpenRouter fallback is available and ready")
+                        else:
+                            print("[WARNING] OpenRouter client created but is_available() returned False")
+                            fallback_client = None
+                    except Exception as init_error:
+                        print(f"[WARNING] Failed to initialize OpenRouter client: {init_error}")
                         fallback_client = None
+                else:
+                    print("[INFO] OpenRouter API key not found in environment")
             except Exception as fallback_init_error:
                 # OpenRouter not configured or failed to initialize - that's OK
+                print(f"[WARNING] OpenRouter fallback initialization error: {fallback_init_error}")
                 fallback_client = None
             
             # Try primary client first
@@ -257,22 +268,28 @@ class RAGPipeline:
                 is_rate_limit = "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "quota" in error_str.lower()
                 
                 # If rate limit and we have OpenRouter fallback, switch immediately
-                if is_rate_limit and fallback_client:
-                    print(f"[WARNING] Rate limit hit on primary LLM. Switching to OpenRouter (Gemini 3 Flash Preview)...")
-                    try:
-                        response = fallback_client.chat_completion(
-                            messages=messages,
-                            temperature=0.1,
-                            max_tokens=2500,
-                        )
-                        raw_output = response["content"]
-                        self.llm_client = fallback_client
-                        print("[INFO] Successfully switched to OpenRouter (Gemini 3 Flash Preview) for consistency")
-                    except Exception as fallback_error:
-                        print(f"[WARNING] OpenRouter fallback also failed: {fallback_error}")
-                        raise RuntimeError(f"Both primary LLM and OpenRouter fallback failed. Primary error: {str(e)}, Fallback error: {str(fallback_error)}")
+                if is_rate_limit:
+                    if fallback_client:
+                        print(f"[WARNING] Rate limit hit on primary LLM. Switching to OpenRouter (Gemini 3 Flash Preview)...")
+                        try:
+                            response = fallback_client.chat_completion(
+                                messages=messages,
+                                temperature=0.1,
+                                max_tokens=2500,
+                            )
+                            raw_output = response["content"]
+                            self.llm_client = fallback_client
+                            print("[INFO] Successfully switched to OpenRouter (Gemini 3 Flash Preview) for consistency")
+                        except Exception as fallback_error:
+                            print(f"[WARNING] OpenRouter fallback also failed: {fallback_error}")
+                            # Still raise, but with more context
+                            raise RuntimeError(f"Both primary LLM and OpenRouter fallback failed. Primary error: {str(e)}, Fallback error: {str(fallback_error)}")
+                    else:
+                        # Rate limit but no OpenRouter configured
+                        print(f"[ERROR] Rate limit hit but OpenRouter not configured. Please set OPENROUTER_API_KEY in .env file.")
+                        raise RuntimeError(f"Rate limit exceeded and no fallback available. Error: {str(e)}")
                 else:
-                    # Not a rate limit or no fallback available - re-raise
+                    # Not a rate limit - re-raise original error
                     raise
             
             if raw_output is None:

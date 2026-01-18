@@ -65,8 +65,11 @@ STEP 4: Check for Explicit Exclusions
 
 STEP 5: Apply Decision Rules
 - APPROVE if: Service type is covered AND not excluded
-- REJECT if: Service is explicitly excluded (even if similar services are covered)
-- ESCALATE if: Genuinely ambiguous (coverage unclear AND exclusion unclear)
+- REJECT if: Service is explicitly excluded AND the claim clearly describes an excluded service
+- ESCALATE if: 
+  * Genuinely ambiguous (coverage unclear AND exclusion unclear)
+  * Claim description is vague about whether exclusion criteria are met (e.g., "somewhat experimental" vs "clearly experimental")
+  * Critical information missing that would determine if exclusion applies
 
 CRITICAL INTERPRETATION RULES:
 
@@ -91,6 +94,11 @@ CRITICAL INTERPRETATION RULES:
    - Missing minor details (exact cost, specific dates) should NOT cause escalation
    - If service TYPE is clearly covered → APPROVE even if some details missing
    - Only escalate if CRITICAL information missing (e.g., authorization requirements that can't be determined)
+
+6. EXPERIMENTAL TREATMENTS:
+   - If claim explicitly states "experimental" or "not approved" → REJECT (Section 9 exclusion)
+   - If claim is vague ("somewhat experimental", "limited information", "not certain") → ESCALATE (needs human review to determine if exclusion criteria are met)
+   - Only REJECT experimental treatments if the claim clearly describes an excluded experimental treatment
 
 6. DECISION PRIORITY (in order):
    a. If clearly COVERED and NOT excluded → APPROVE
