@@ -9,6 +9,9 @@ langchain-community>=0.0.20
 # Vector store
 faiss-cpu>=1.7.4
 
+# NumPy compatibility (pin to < 2.0 for compatibility with scipy, torch, etc.)
+numpy<2.0
+
 # PDF processing
 pdfplumber>=0.10.0
 pypdf>=3.17.0

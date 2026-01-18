@@ -20,7 +20,11 @@ try:
 except ImportError:
     PYPDF_AVAILABLE = False
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+try:
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+except ImportError:
+    # Fallback for older langchain versions
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 
 class PDFChunk:
@@ -199,10 +203,10 @@ def chunk_pdf_text(
 
 def load_policy_pdf(pdf_path: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[PDFChunk]:
     """
-    Load and chunk a policy PDF file.
+    Load and chunk a policy PDF or text file.
 
     Args:
-        pdf_path: Path to PDF file
+        pdf_path: Path to PDF or text file
         chunk_size: Target chunk size in characters
         chunk_overlap: Overlap between chunks in characters
 
@@ -215,8 +219,16 @@ def load_policy_pdf(pdf_path: str, chunk_size: int = 1000, chunk_overlap: int = 
     """
     policy_name = Path(pdf_path).stem
 
-    # Extract text from PDF
-    pages = extract_text_from_pdf(pdf_path)
+    # Check if file is a text file
+    if pdf_path.lower().endswith('.txt'):
+        # Read text file directly
+        with open(pdf_path, "r", encoding="utf-8") as f:
+            full_text = f.read()
+        # Create a single "page" from the text
+        pages = [{"text": full_text, "page_number": 1}]
+    else:
+        # Extract text from PDF
+        pages = extract_text_from_pdf(pdf_path)
 
     # Chunk text with metadata
     chunks = chunk_pdf_text(pages, policy_name, chunk_size, chunk_overlap)
