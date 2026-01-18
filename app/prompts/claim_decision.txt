@@ -24,14 +24,17 @@ OUTPUT FORMAT (JSON):
   "confidence": "HIGH" | "MEDIUM" | "LOW"
 }}
 
-DECISION CRITERIA (APPLY STRICTLY):
+DECISION CRITERIA (APPLY STRICTLY - BE DECISIVE):
 
 APPROVE when:
 - The claim description matches a COVERED service or benefit explicitly stated in the policy
 - The policy clearly states coverage for the type of service, condition, or expense described
 - All requirements for coverage (if any) appear to be met based on the claim description
+- Emergency medical services are almost always APPROVED if the policy covers emergency services
+- Preventive care, routine services, and standard medical treatments are APPROVED if covered
 - Example: Emergency room visit for broken bone → APPROVE (Section 2.1 covers emergency services for broken bones)
 - Example: Routine dental cleaning → APPROVE (Section 2.2 covers routine dental cleanings)
+- Example: Regular skiing accident requiring emergency treatment → APPROVE (emergency services are covered, regular skiing is not excluded)
 
 REJECT when:
 - The claim is EXPLICITLY EXCLUDED by the policy (e.g., cosmetic surgery, experimental treatments, excluded activities)
@@ -42,15 +45,16 @@ REJECT when:
   * Regular skiing, recreational sports, or normal activities → COVERED (not excluded unless explicitly listed)
 - Example: Facelift for cosmetic purposes → REJECT (Section 6.2 excludes cosmetic procedures)
 - Example: Bungee jumping injury → REJECT (Section 6.1 excludes extreme sports)
-- Example: Regular skiing accident → APPROVE (Section 6.1 only excludes "extreme skiing", not regular skiing)
+- Example: Experimental treatment not approved by FDA → REJECT (if policy excludes experimental treatments)
 
 ESCALATE ONLY when:
 - The policy text is genuinely ambiguous or contradictory about coverage
 - Critical information is missing from the retrieved policy sections (e.g., cost limits, authorization requirements that can't be determined)
 - The claim involves edge cases not clearly addressed in the policy
 - DO NOT escalate simply because you want to be cautious - if the policy clearly covers or excludes, make the decision
+- DO NOT escalate for covered services just because some details are missing - if the service type is covered, APPROVE it
 
-IMPORTANT: If the policy clearly covers a service, APPROVE it. If it clearly excludes it, REJECT it. Only ESCALATE when there is genuine ambiguity or missing critical information.
+CRITICAL: Default to APPROVE if the service type is covered, even if some details are missing. Only REJECT if explicitly excluded. Only ESCALATE if truly ambiguous.
 
 Policy Context:
 {policy_context}
@@ -65,13 +69,20 @@ STEP-BY-STEP ANALYSIS:
 4. Check if the claim matches an EXCLUDED service → REJECT  
 5. Only if genuinely ambiguous or missing critical info → ESCALATE
 
-IMPORTANT INTERPRETATION RULES:
+IMPORTANT INTERPRETATION RULES (APPLY THESE STRICTLY):
 - If a service is listed as COVERED (e.g., emergency services, preventive care), APPROVE it unless it's also explicitly EXCLUDED
 - For activity exclusions: Only reject if the activity is SPECIFICALLY listed as excluded (e.g., "extreme skiing" is excluded, but regular skiing is NOT excluded unless explicitly stated)
 - Emergency medical treatment for injuries is generally COVERED even if the activity that caused the injury has exclusions, UNLESS the policy explicitly excludes medical expenses from that activity
-- When in doubt between APPROVE and ESCALATE, if the policy clearly covers the service type, APPROVE it
-- When in doubt between REJECT and ESCALATE, if the policy clearly excludes it, REJECT it
+- When in doubt between APPROVE and ESCALATE: If the policy clearly covers the service type, APPROVE it (don't escalate)
+- When in doubt between REJECT and ESCALATE: If the policy clearly excludes it, REJECT it (don't escalate)
+- Missing minor details (exact costs, specific dates) should NOT cause escalation if the service type is clearly covered
+- Only escalate if the policy is genuinely unclear about whether the service is covered or excluded
 
-Remember: Be decisive. If the policy clearly covers it, APPROVE. If it clearly excludes it, REJECT. Only ESCALATE when truly uncertain or missing critical information.
+DECISION PRIORITY:
+1. If clearly COVERED → APPROVE (even if some details missing)
+2. If clearly EXCLUDED → REJECT
+3. Only if genuinely UNCLEAR → ESCALATE
+
+Remember: Be decisive. Default to APPROVE for covered services. Only ESCALATE when truly uncertain.
 
 Analyze this claim and provide your decision in the JSON format specified above.

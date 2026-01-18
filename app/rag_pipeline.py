@@ -169,7 +169,7 @@ class RAGPipeline:
             self.embedding_service.embed_text(claim_text, task_type="RETRIEVAL_QUERY"),
             dtype=np.float32,
         )
-        retrieved_results = self.retriever.search(query_embedding, k=min(self.top_k + 2, 10))  # Get a few more chunks for context
+        retrieved_results = self.retriever.search(query_embedding, k=min(self.top_k + 3, 12))  # Get more chunks for better context
         
         # Retrieved results contain:
         # - chunk: Full text of the policy chunk
@@ -222,12 +222,18 @@ class RAGPipeline:
             fallback_client = None
             
             # Check if OpenRouter is available as fallback (using same Gemini 3 Flash Preview model for consistency)
+            # Try to initialize even if not configured - will fail gracefully
             from app.llm_client import OpenRouterClient
+            fallback_client = None
             try:
-                fallback_client = OpenRouterClient(model_name="google/gemini-3-flash-preview")
-                if not fallback_client.is_available():
-                    fallback_client = None
-            except:
+                # Check if OpenRouter API key exists
+                import os
+                if os.getenv("OPENROUTER_API_KEY"):
+                    fallback_client = OpenRouterClient(model_name="google/gemini-3-flash-preview")
+                    if not fallback_client.is_available():
+                        fallback_client = None
+            except Exception as fallback_init_error:
+                # OpenRouter not configured or failed to initialize - that's OK
                 fallback_client = None
             
             # Try primary client first
@@ -322,8 +328,9 @@ class RAGPipeline:
         # This is part of runtime evaluation that directly affects the decision
         # Combines retrieval quality (similarity scores) with model confidence signals
         # Note: Uses model confidence indicators, NOT decision correctness (which is only measured offline)
-        avg_retrieval_score = np.mean([r["score"] for r in retrieved_results])
-        confidence_map = {"HIGH": 0.9, "MEDIUM": 0.75, "LOW": 0.6}  # Adjusted: less conservative
+        avg_retrieval_score = np.mean([r["score"] for r in retrieved_results]) if retrieved_results else 0.0
+        # Adjusted confidence mapping: be less conservative, trust LLM more
+        confidence_map = {"HIGH": 0.95, "MEDIUM": 0.80, "LOW": 0.65}  # More optimistic
         # llm_confidence_indicator: Model-reported uncertainty or refusal markers
         # In production, this can be replaced with calibrated confidence estimation
         llm_confidence = confidence_map.get(
@@ -331,12 +338,13 @@ class RAGPipeline:
         )
         # Weight retrieval more heavily if it's high quality (good matches)
         # Weight LLM confidence more if retrieval is lower quality
-        if avg_retrieval_score >= 0.75:
-            # High quality retrieval - trust it more
-            confidence_score = (avg_retrieval_score * 0.6) + (llm_confidence * 0.4)
+        # Adjusted weights: trust LLM more, retrieval less
+        if avg_retrieval_score >= 0.70:
+            # High quality retrieval - balanced weighting
+            confidence_score = (avg_retrieval_score * 0.5) + (llm_confidence * 0.5)
         else:
-            # Lower quality retrieval - rely more on LLM confidence
-            confidence_score = (avg_retrieval_score * 0.4) + (llm_confidence * 0.6)
+            # Lower quality retrieval - trust LLM more (but still consider retrieval)
+            confidence_score = (avg_retrieval_score * 0.35) + (llm_confidence * 0.65)
 
         # RUNTIME EVALUATION: Auto-escalate if confidence is too low
         # This is a production safety mechanism - prevents unsafe approvals/rejections
@@ -346,22 +354,22 @@ class RAGPipeline:
         
         # Only override to ESCALATE if confidence is very low AND it's an APPROVE/REJECT decision
         # If LLM already said ESCALATE, respect that decision
-        # Lower threshold to 0.65 to reduce false escalations, but still catch truly uncertain cases
-        if decision != "ESCALATE" and confidence_score < 0.65:
+        # Lower threshold to 0.55 to reduce false escalations - trust the LLM more
+        # Only escalate if confidence is truly very low
+        if decision != "ESCALATE" and confidence_score < 0.55:
             decision = "ESCALATE"
             decision_data["explanation"] = (
                 f"Low confidence score ({confidence_score:.2f}). "
                 f"Original decision: {decision_data.get('decision', 'UNKNOWN')}. "
                 f"Manual review required."
             )
-        # If confidence is medium (0.65-0.75) and decision is REJECT, allow it (rejections are safer)
-        # But if it's APPROVE with medium confidence, be more cautious
-        elif decision == "APPROVE" and 0.65 <= confidence_score < 0.70:
-            # For APPROVE with medium confidence, check if retrieval quality is good
-            if avg_retrieval_score < 0.70:
+        # For medium confidence (0.55-0.70), trust the LLM decision unless retrieval is very poor
+        elif decision == "APPROVE" and 0.55 <= confidence_score < 0.65:
+            # Only escalate APPROVE if retrieval quality is very poor
+            if avg_retrieval_score < 0.50:
                 decision = "ESCALATE"
                 decision_data["explanation"] = (
-                    f"Medium confidence score ({confidence_score:.2f}) with low retrieval quality. "
+                    f"Medium confidence score ({confidence_score:.2f}) with very low retrieval quality. "
                     f"Original decision: APPROVE. Manual review recommended."
                 )
 
