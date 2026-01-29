@@ -351,7 +351,7 @@ git clone <repository-url>
 cd manulife-smartclaim
 ```
 
-2. **Install dependencies**:
+2. **Install dependencies** (includes FastAPI and Streamlit for web/UI):
 ```bash
 pip install -r requirements.txt
 ```
@@ -418,6 +418,15 @@ python scripts/test_claims.py
 ```bash
 python -m app.main evaluate data/evaluation_set.json --policy-paths data/policies/health_policy.pdf data/policies/travel_policy.pdf --output evaluation_report.json
 ```
+
+### Streamlit UI
+
+**Start the Streamlit app** (from repo root):
+```bash
+streamlit run app/streamlit_app.py
+```
+
+Ingest a policy via the sidebar (upload a PDF or load a sample from `data/policies/`), enter claim text in the main area, then click **Process claim** to get the decision, explanation, and citations in the browser.
 
 ### FastAPI Server
 
@@ -511,6 +520,7 @@ manulife-smartclaim/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py                 # CLI and FastAPI entry point
+│   ├── streamlit_app.py        # Streamlit UI
 │   ├── rag_pipeline.py         # Main orchestration
 │   ├── retriever.py            # Vector DB abstraction
 │   ├── llm_client.py           # Model-agnostic LLM interface
