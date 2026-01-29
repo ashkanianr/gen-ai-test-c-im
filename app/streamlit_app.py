@@ -5,11 +5,26 @@ Uses the same RAGPipeline as CLI and FastAPI.
 """
 
 import tempfile
+import time
 from pathlib import Path
 
 import streamlit as st
 
 from app.rag_pipeline import RAGPipeline
+
+# Project root for resolving data paths (same as scripts/test_claims.py)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# Same 8 test cases as scripts/test_claims.py
+TEST_CASES = [
+    {"claim": "data/claims/health_claim_001_approve.txt", "policy": "data/policies/health_policy.txt", "expected": "APPROVE"},
+    {"claim": "data/claims/health_claim_002_approve.txt", "policy": "data/policies/health_policy.txt", "expected": "APPROVE"},
+    {"claim": "data/claims/health_claim_004_reject.txt", "policy": "data/policies/health_policy.txt", "expected": "REJECT"},
+    {"claim": "data/claims/health_claim_006_reject.txt", "policy": "data/policies/health_policy.txt", "expected": "REJECT"},
+    {"claim": "data/claims/health_claim_007_escalate.txt", "policy": "data/policies/health_policy.txt", "expected": "ESCALATE"},
+    {"claim": "data/claims/travel_claim_001_approve.txt", "policy": "data/policies/travel_policy.txt", "expected": "APPROVE"},
+    {"claim": "data/claims/travel_claim_004_reject.txt", "policy": "data/policies/travel_policy.txt", "expected": "REJECT"},
+]
 
 
 def get_pipeline() -> RAGPipeline:
@@ -165,6 +180,73 @@ def main() -> None:
 
                 except Exception as e:
                     st.error(f"Error processing claim: {e}")
+
+    # --- Run test suite (same as scripts/test_claims.py) ---
+    st.markdown("---")
+    st.subheader("Run test suite")
+    st.caption("Run the same 8 sample claims as scripts/test_claims.py. A short delay between tests helps avoid API rate limits.")
+    run_suite_clicked = st.button("Run test suite", key="run_test_suite")
+
+    if run_suite_clicked:
+        results = []
+        progress_placeholder = st.empty()
+        summary_placeholder = st.empty()
+        table_placeholder = st.empty()
+        with st.spinner("Running test suite..."):
+            for i, tc in enumerate(TEST_CASES):
+                progress_placeholder.progress((i + 1) / len(TEST_CASES), text=f"Test {i + 1}/{len(TEST_CASES)}: {Path(tc['claim']).name}")
+                claim_path = PROJECT_ROOT / tc["claim"]
+                policy_path = PROJECT_ROOT / tc["policy"]
+                if not claim_path.exists() or not policy_path.exists():
+                    results.append({
+                        "claim": Path(tc["claim"]).name,
+                        "expected": tc["expected"],
+                        "actual": "ERROR",
+                        "correct": False,
+                        "error": f"Missing file: {claim_path} or {policy_path}",
+                    })
+                    continue
+                try:
+                    pipeline.retriever.clear()
+                    pipeline.ingest_policy(str(policy_path))
+                    result = pipeline.process_claim(str(claim_path))
+                    actual = result["decision"]
+                    results.append({
+                        "claim": Path(tc["claim"]).name,
+                        "expected": tc["expected"],
+                        "actual": actual,
+                        "correct": actual == tc["expected"],
+                        "confidence": result.get("confidence_score"),
+                    })
+                except Exception as e:
+                    results.append({
+                        "claim": Path(tc["claim"]).name,
+                        "expected": tc["expected"],
+                        "actual": "ERROR",
+                        "correct": False,
+                        "error": str(e),
+                    })
+                if i < len(TEST_CASES) - 1:
+                    time.sleep(2)
+        progress_placeholder.empty()
+        correct = sum(1 for r in results if r["correct"])
+        summary_placeholder.metric("Correct", f"{correct} / {len(TEST_CASES)}")
+        summary_placeholder.caption(f"Accuracy: {correct / len(TEST_CASES) * 100:.1f}%")
+        rows = []
+        for r in results:
+            status = "OK" if r["correct"] else "MISMATCH" if r["actual"] != "ERROR" else "ERROR"
+            rows.append({
+                "Claim": r["claim"],
+                "Expected": r["expected"],
+                "Actual": r["actual"],
+                "Status": status,
+                "Confidence": f"{r.get('confidence', 0):.0%}" if r.get("confidence") is not None else "",
+            })
+        table_placeholder.dataframe(rows, use_container_width=True, hide_index=True)
+        for r in results:
+            if r.get("error"):
+                with st.expander(f"Error: {r['claim']}"):
+                    st.code(r["error"])
 
 
 if __name__ == "__main__":
