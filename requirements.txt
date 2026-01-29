@@ -1,3 +1,4 @@
+# Python 3.10+ required (google-genai and other deps)
 # Core LLM and AI libraries
 google-genai>=1.0.0
 openai>=1.0.0  # For OpenRouter compatibility

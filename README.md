@@ -340,7 +340,7 @@ These boundaries ensure the system remains a decision-support tool rather than a
 ## Installation
 
 ### Prerequisites
-- Python 3.8+
+- Python 3.10+ required
 - Gemini API key (or OpenRouter API key for fallback)
 
 ### Setup
