@@ -242,7 +242,7 @@ def main() -> None:
                 "Status": status,
                 "Confidence": f"{r.get('confidence', 0):.0%}" if r.get("confidence") is not None else "",
             })
-        table_placeholder.dataframe(rows, use_container_width=True, hide_index=True)
+        table_placeholder.dataframe(rows, width="stretch", hide_index=True)
         for r in results:
             if r.get("error"):
                 with st.expander(f"Error: {r['claim']}"):
